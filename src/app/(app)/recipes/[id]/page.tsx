@@ -5,6 +5,7 @@ import { ChevronRightIcon } from "lucide-react";
 
 import { MadeThis } from "@/components/recipe/made-this";
 import { OriginalCards } from "@/components/recipe/original-cards";
+import { RecipeActions } from "@/components/recipe/recipe-actions";
 import { RecipeCommentForm } from "@/components/recipe/recipe-comment-form";
 import { RecipeView } from "@/components/recipe/recipe-view";
 import { Avatar } from "@/components/ui/avatar";
@@ -89,6 +90,7 @@ export default async function RecipePage(props: PageProps<"/recipes/[id]">) {
           {recipe.tags.length > 0 && <p className="text-[0.8125rem] text-muted-foreground">{recipe.tags.join(", ")}</p>}
           <div className="mt-3 flex flex-wrap gap-2 print:hidden">
             <MadeThis recipeId={recipe.id} title={recipe.title} />
+            <RecipeActions recipeId={recipe.id} />
           </div>
         </div>
         {recipe.photoUrl && (
