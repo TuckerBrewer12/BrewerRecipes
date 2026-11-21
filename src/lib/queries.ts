@@ -53,6 +53,20 @@ export type RecipeDetail = {
   comments: { id: string; author: MemberRef; body: string; createdAt: string }[];
 };
 
+export type FeedPost = {
+  id: string;
+  author: MemberRef;
+  caption: string;
+  createdAt: string;
+  editedAt: string | null;
+  photos: string[];
+  recipes: { id: string; title: string }[];
+  reactions: { emoji: string; count: number; mine: boolean }[];
+  comments: { id: string; author: MemberRef; body: string; createdAt: string }[];
+};
+
+export const REACTIONS = ["❤️", "😋", "👏"] as const;
+
 type Row = Record<string, unknown>;
 const one = <T = Row,>(v: unknown): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null)) as T | null;
 
@@ -135,6 +149,20 @@ export async function listRecipes(f: RecipeFilters = {}): Promise<RecipeCard[]> 
   const cards = await toCards((data ?? []) as Row[]);
   if (f.sort === "most-made") cards.sort((a, b) => b.timesMade - a.timesMade);
   return cards;
+}
+
+export async function recentRecipes(limit = 5) {
+  const { data } = await db()
+    .from("recipes")
+    .select("id, title, owner:people!recipes_owner_person_id_fkey(id, name)")
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return ((data ?? []) as Row[]).map((r) => ({
+    id: String(r.id),
+    title: String(r.title),
+    owner: one<PersonRef>(r.owner),
+  }));
 }
 
 export async function listPeople(): Promise<PersonRef[]> {
@@ -259,4 +287,92 @@ export async function getRecipe(id: string): Promise<RecipeDetail | null> {
       createdAt: String(c.created_at),
     })),
   };
+}
+
+export async function getFeed(meId: string, opts: { authorId?: string; limit?: number } = {}): Promise<FeedPost[]> {
+  let q = db()
+    .from("posts")
+    .select(
+      `id, caption, created_at, edited_at,
+       author:members!posts_author_id_fkey(id, name),
+       post_photos(path, position),
+       post_recipes(recipe:recipes(id, title, deleted_at)),
+       reactions(emoji, member_id),
+       comments(id, body, created_at, deleted_at, author:members!comments_author_id_fkey(id, name))`,
+    )
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(opts.limit ?? 30);
+  if (opts.authorId) q = q.eq("author_id", opts.authorId);
+  const { data, error } = await q;
+  if (error) throw error;
+  const rows = (data ?? []) as Row[];
+
+  const allPaths = rows.flatMap((p) => ((p.post_photos as Row[]) ?? []).map((ph) => String(ph.path)));
+  const urls = await signedUrls(allPaths);
+
+  return rows.map((p) => {
+    const photos = ((p.post_photos as Row[]) ?? [])
+      .sort((a, b) => Number(a.position) - Number(b.position))
+      .map((ph) => urls[String(ph.path)])
+      .filter(Boolean);
+    const reactions = ((p.reactions as Row[]) ?? []) as { emoji: string; member_id: string }[];
+    return {
+      id: String(p.id),
+      author: one<MemberRef>(p.author)!,
+      caption: String(p.caption ?? ""),
+      createdAt: String(p.created_at),
+      editedAt: (p.edited_at as string) ?? null,
+      photos,
+      recipes: ((p.post_recipes as Row[]) ?? [])
+        .map((pr) => one<Row>(pr.recipe))
+        .filter((r): r is Row => !!r && !r.deleted_at)
+        .map((r) => ({ id: String(r.id), title: String(r.title) })),
+      reactions: REACTIONS.map((emoji) => ({
+        emoji,
+        count: reactions.filter((x) => x.emoji === emoji).length,
+        mine: reactions.some((x) => x.emoji === emoji && x.member_id === meId),
+      })),
+      comments: ((p.comments as Row[]) ?? [])
+        .filter((c) => !c.deleted_at)
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+        .map((c) => ({
+          id: String(c.id),
+          author: one<MemberRef>(c.author)!,
+          body: String(c.body),
+          createdAt: String(c.created_at),
+        })),
+    };
+  });
+}
+
+export type CookLogEntry = {
+  id: string;
+  on: string;
+  note: string | null;
+  member: MemberRef;
+  recipe: { id: string; title: string };
+};
+
+export async function cookLog(opts: { memberId?: string; sinceDays?: number; limit?: number } = {}): Promise<CookLogEntry[]> {
+  let q = db()
+    .from("cook_logs")
+    .select("id, cooked_on, note, member:members(id, name), recipe:recipes!inner(id, title, deleted_at)")
+    .is("recipe.deleted_at", null)
+    .order("cooked_on", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(opts.limit ?? 100);
+  if (opts.memberId) q = q.eq("member_id", opts.memberId);
+  if (opts.sinceDays) {
+    const since = new Date(Date.now() - opts.sinceDays * 86400000).toISOString().slice(0, 10);
+    q = q.gte("cooked_on", since);
+  }
+  const { data } = await q;
+  return ((data ?? []) as Row[]).map((l) => ({
+    id: String(l.id),
+    on: String(l.cooked_on),
+    note: (l.note as string) ?? null,
+    member: one<MemberRef>(l.member)!,
+    recipe: { id: String(one<Row>(l.recipe)!.id), title: String(one<Row>(l.recipe)!.title) },
+  }));
 }
