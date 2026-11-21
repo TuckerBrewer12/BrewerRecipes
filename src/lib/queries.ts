@@ -4,7 +4,6 @@ import { db, signedUrls } from "@/lib/supabase";
 import type { Category } from "@/lib/recipe/draft";
 
 export type PersonRef = { id: string; name: string };
-
 export type MemberRef = { id: string; name: string };
 
 export type RecipeCard = {
@@ -379,5 +378,37 @@ export async function cookLog(opts: { memberId?: string; sinceDays?: number; lim
     note: (l.note as string) ?? null,
     member: one<MemberRef>(l.member)!,
     recipe: { id: String(one<Row>(l.recipe)!.id), title: String(one<Row>(l.recipe)!.title) },
+  }));
+}
+
+export async function getMemberProfile(id: string) {
+  const { data: m } = await db().from("members").select("id, name, created_at").eq("id", id).maybeSingle();
+  if (!m) return null;
+  const [recipes, cooks, posts] = await Promise.all([
+    db().from("recipes").select("id", { count: "exact", head: true }).eq("uploader_id", id).is("deleted_at", null),
+    db().from("cook_logs").select("id", { count: "exact", head: true }).eq("member_id", id),
+    db().from("posts").select("id", { count: "exact", head: true }).eq("author_id", id).is("deleted_at", null),
+  ]);
+  return {
+    id: String(m.id),
+    name: String(m.name),
+    joined: String(m.created_at),
+    recipeCount: recipes.count ?? 0,
+    cookCount: cooks.count ?? 0,
+    postCount: posts.count ?? 0,
+  };
+}
+
+export async function deletedRecipes() {
+  const { data } = await db()
+    .from("recipes")
+    .select("id, title, deleted_at, uploader:members!recipes_uploader_id_fkey(name)")
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+  return ((data ?? []) as Row[]).map((r) => ({
+    id: String(r.id),
+    title: String(r.title),
+    deletedAt: String(r.deleted_at),
+    by: String(one<Row>(r.uploader)?.name ?? ""),
   }));
 }
