@@ -1,0 +1,187 @@
+import "server-only";
+
+import { db, signedUrls } from "@/lib/supabase";
+import type { Category } from "@/lib/recipe/draft";
+
+export type PersonRef = { id: string; name: string };
+
+export type MemberRef = { id: string; name: string };
+
+export type RecipeDetail = {
+  id: string;
+  title: string;
+  category: Category;
+  tags: string[];
+  makes: string | null;
+  prepTime: string | null;
+  cookTime: string | null;
+  source: string | null;
+  owner: PersonRef | null;
+  uploader: MemberRef;
+  editor: MemberRef | null;
+  basedOn: { id: string; title: string; ownerName: string | null } | null;
+  createdAt: string;
+  updatedAt: string;
+  ingredients: {
+    id: string;
+    section: string | null;
+    quantity: number | null;
+    quantityText: string | null;
+    unit: string | null;
+    name: string;
+    note: string | null;
+    originalText: string;
+    linkedRecipe: { id: string; title: string } | null;
+  }[];
+  steps: { id: string; section: string | null; text: string; ingredientIds: string[]; stepIds: string[] }[];
+  originals: { path: string; url: string }[];
+  photoUrl: string | null;
+  timesMade: number;
+  lastMade: { on: string; by: string } | null;
+  notes: { id: string; by: string; on: string; note: string }[];
+  comments: { id: string; author: MemberRef; body: string; createdAt: string }[];
+};
+
+type Row = Record<string, unknown>;
+const one = <T = Row,>(v: unknown): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null)) as T | null;
+
+async function heroPaths(recipeIds: string[]): Promise<Record<string, string>> {
+  if (recipeIds.length === 0) return {};
+  const [{ data: postLinks }, { data: originals }] = await Promise.all([
+    db()
+      .from("post_recipes")
+      .select("recipe_id, posts!inner(created_at, deleted_at, post_photos(path, position))")
+      .in("recipe_id", recipeIds)
+      .is("posts.deleted_at", null),
+    db()
+      .from("recipe_images")
+      .select("recipe_id, path, position")
+      .in("recipe_id", recipeIds)
+      .order("position"),
+  ]);
+  const out: Record<string, { path: string; at: string }> = {};
+  for (const link of (postLinks ?? []) as Row[]) {
+    const post = one<Row>(link.posts);
+    if (!post) continue;
+    const photos = ((post.post_photos as Row[]) ?? []).sort((a, b) => Number(a.position) - Number(b.position));
+    if (!photos[0]) continue;
+    const id = String(link.recipe_id);
+    const at = String(post.created_at);
+    if (!out[id] || out[id].at < at) out[id] = { path: String(photos[0].path), at };
+  }
+  for (const img of (originals ?? []) as Row[]) {
+    const id = String(img.recipe_id);
+    if (!out[id]) out[id] = { path: String(img.path), at: "" };
+  }
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.path]));
+}
+
+export async function getRecipe(id: string): Promise<RecipeDetail | null> {
+  const { data: r } = await db()
+    .from("recipes")
+    .select(
+      `id, title, category, tags, makes, prep_time, cook_time, source, created_at, updated_at,
+       owner:people!recipes_owner_person_id_fkey(id, name),
+       uploader:members!recipes_uploader_id_fkey(id, name),
+       editor:members!recipes_last_edited_by_fkey(id, name),
+       based_on:recipes!recipes_based_on_recipe_id_fkey(id, title, owner:people!recipes_owner_person_id_fkey(name))`,
+    )
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!r) return null;
+
+  const [ingredients, steps, images, logs, comments, heroes] = await Promise.all([
+    db()
+      .from("ingredients")
+      .select("id, section, quantity, quantity_text, unit, name, note, original_text, linked:recipes!ingredients_linked_recipe_id_fkey(id, title)")
+      .eq("recipe_id", id)
+      .order("position"),
+    db()
+      .from("steps")
+      .select("id, section, text, step_inputs!step_inputs_step_id_fkey(ingredient_id, input_step_id)")
+      .eq("recipe_id", id)
+      .order("position"),
+    db().from("recipe_images").select("path").eq("recipe_id", id).eq("kind", "original").order("position"),
+    db()
+      .from("cook_logs")
+      .select("id, note, cooked_on, created_at, member:members(name)")
+      .eq("recipe_id", id)
+      .order("cooked_on", { ascending: false })
+      .order("created_at", { ascending: false }),
+    db()
+      .from("comments")
+      .select("id, body, created_at, author:members(id, name)")
+      .eq("recipe_id", id)
+      .is("deleted_at", null)
+      .order("created_at"),
+    heroPaths([id]),
+  ]);
+
+  const originalPaths = ((images.data ?? []) as Row[]).map((i) => String(i.path));
+  const urls = await signedUrls([...originalPaths, ...Object.values(heroes)]);
+  const logRows = (logs.data ?? []) as Row[];
+  const rr = r as Row;
+  const basedOn = one<Row>(rr.based_on);
+
+  return {
+    id: String(rr.id),
+    title: String(rr.title),
+    category: rr.category as Category,
+    tags: (rr.tags as string[]) ?? [],
+    makes: (rr.makes as string) || null,
+    prepTime: (rr.prep_time as string) || null,
+    cookTime: (rr.cook_time as string) || null,
+    source: (rr.source as string) || null,
+    owner: one<PersonRef>(rr.owner),
+    uploader: one<MemberRef>(rr.uploader)!,
+    editor: one<MemberRef>(rr.editor),
+    basedOn: basedOn
+      ? { id: String(basedOn.id), title: String(basedOn.title), ownerName: (one<Row>(basedOn.owner)?.name as string) ?? null }
+      : null,
+    createdAt: String(rr.created_at),
+    updatedAt: String(rr.updated_at),
+    ingredients: ((ingredients.data ?? []) as Row[]).map((i) => ({
+      id: String(i.id),
+      section: (i.section as string) ?? null,
+      quantity: i.quantity == null ? null : Number(i.quantity),
+      quantityText: (i.quantity_text as string) ?? null,
+      unit: (i.unit as string) ?? null,
+      name: String(i.name),
+      note: (i.note as string) ?? null,
+      originalText: String(i.original_text),
+      linkedRecipe: one<{ id: string; title: string }>(i.linked),
+    })),
+    steps: ((steps.data ?? []) as Row[]).map((s) => {
+      const inputs = (s.step_inputs as Row[]) ?? [];
+      return {
+        id: String(s.id),
+        section: (s.section as string) ?? null,
+        text: String(s.text),
+        ingredientIds: inputs.filter((x) => x.ingredient_id).map((x) => String(x.ingredient_id)),
+        stepIds: inputs.filter((x) => x.input_step_id).map((x) => String(x.input_step_id)),
+      };
+    }),
+    originals: originalPaths.map((p) => ({ path: p, url: urls[p] })).filter((o) => o.url),
+    photoUrl: heroes[id] ? (urls[heroes[id]] ?? null) : null,
+    timesMade: logRows.length,
+    lastMade: logRows[0]
+      ? { on: String(logRows[0].cooked_on), by: String(one<Row>(logRows[0].member)?.name ?? "") }
+      : null,
+    notes: logRows
+      .filter((l) => l.note)
+      .slice(0, 10)
+      .map((l) => ({
+        id: String(l.id),
+        by: String(one<Row>(l.member)?.name ?? ""),
+        on: String(l.cooked_on),
+        note: String(l.note),
+      })),
+    comments: ((comments.data ?? []) as Row[]).map((c) => ({
+      id: String(c.id),
+      author: one<MemberRef>(c.author)!,
+      body: String(c.body),
+      createdAt: String(c.created_at),
+    })),
+  };
+}
