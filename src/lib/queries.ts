@@ -7,6 +7,17 @@ export type PersonRef = { id: string; name: string };
 
 export type MemberRef = { id: string; name: string };
 
+export type RecipeCard = {
+  id: string;
+  title: string;
+  category: Category;
+  owner: PersonRef | null;
+  uploader: MemberRef;
+  timesMade: number;
+  photoUrl: string | null;
+  createdAt: string;
+};
+
 export type RecipeDetail = {
   id: string;
   title: string;
@@ -76,9 +87,68 @@ async function heroPaths(recipeIds: string[]): Promise<Record<string, string>> {
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.path]));
 }
 
+async function statsFor(recipeIds: string[]) {
+  if (recipeIds.length === 0) return {} as Record<string, number>;
+  const { data } = await db().from("recipe_stats").select("recipe_id, times_made").in("recipe_id", recipeIds);
+  return Object.fromEntries(((data ?? []) as Row[]).map((r) => [String(r.recipe_id), Number(r.times_made)]));
+}
+
+const RECIPE_CARD_SELECT =
+  "id, title, category, created_at, owner:people!recipes_owner_person_id_fkey(id, name), uploader:members!recipes_uploader_id_fkey(id, name)";
+
+async function toCards(rows: Row[]): Promise<RecipeCard[]> {
+  const ids = rows.map((r) => String(r.id));
+  const [heroes, stats] = await Promise.all([heroPaths(ids), statsFor(ids)]);
+  const urls = await signedUrls(Object.values(heroes));
+  return rows.map((r) => {
+    const id = String(r.id);
+    return {
+      id,
+      title: String(r.title),
+      category: r.category as Category,
+      owner: one<PersonRef>(r.owner) ?? null,
+      uploader: one<MemberRef>(r.uploader)!,
+      timesMade: stats[id] ?? 0,
+      photoUrl: heroes[id] ? (urls[heroes[id]] ?? null) : null,
+      createdAt: String(r.created_at),
+    };
+  });
+}
+
+export type RecipeFilters = {
+  q?: string;
+  category?: string;
+  owner?: string;
+  uploader?: string;
+  sort?: "recent" | "most-made" | "title";
+};
+
+export async function listRecipes(f: RecipeFilters = {}): Promise<RecipeCard[]> {
+  let query = db().from("recipes").select(RECIPE_CARD_SELECT).is("deleted_at", null);
+  if (f.q?.trim()) query = query.textSearch("search", f.q.trim(), { type: "websearch", config: "english" });
+  if (f.category) query = query.eq("category", f.category);
+  if (f.owner) query = query.eq("owner_person_id", f.owner);
+  if (f.uploader) query = query.eq("uploader_id", f.uploader);
+  query = f.sort === "title" ? query.order("title") : query.order("created_at", { ascending: false });
+  const { data, error } = await query.limit(500);
+  if (error) throw error;
+  const cards = await toCards((data ?? []) as Row[]);
+  if (f.sort === "most-made") cards.sort((a, b) => b.timesMade - a.timesMade);
+  return cards;
+}
+
 export async function listPeople(): Promise<PersonRef[]> {
   const { data } = await db().from("people").select("id, name").order("name");
   return (data ?? []) as PersonRef[];
+}
+
+export async function listMembers() {
+  const { data } = await db()
+    .from("members")
+    .select("id, name, phone, is_admin, large_text, created_at")
+    .is("removed_at", null)
+    .order("created_at");
+  return (data ?? []) as { id: string; name: string; phone: string; is_admin: boolean; large_text: boolean }[];
 }
 
 export async function getRecipe(id: string): Promise<RecipeDetail | null> {
