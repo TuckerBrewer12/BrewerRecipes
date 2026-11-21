@@ -76,6 +76,11 @@ async function heroPaths(recipeIds: string[]): Promise<Record<string, string>> {
   return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.path]));
 }
 
+export async function listPeople(): Promise<PersonRef[]> {
+  const { data } = await db().from("people").select("id, name").order("name");
+  return (data ?? []) as PersonRef[];
+}
+
 export async function getRecipe(id: string): Promise<RecipeDetail | null> {
   const { data: r } = await db()
     .from("recipes")
