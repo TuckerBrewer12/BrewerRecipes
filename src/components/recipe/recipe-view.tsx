@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+import { RecipeGrid } from "@/components/recipe/recipe-grid";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { hasGrid, layoutGrid } from "@/lib/recipe/grid";
 import { displayAmount } from "@/lib/recipe/quantity";
 import type { RecipeDetail } from "@/lib/queries";
 
@@ -26,6 +28,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function RecipeView({ ingredients, steps, aside, after }: Props) {
+  const [view, setView] = useState<"recipe" | "grid">("recipe");
   const [scale, setScale] = useState("1");
   const [units, setUnits] = useState<"us" | "metric">("us");
 
@@ -38,9 +41,27 @@ export function RecipeView({ ingredients, steps, aside, after }: Props) {
     [ingredients, scale, units],
   );
 
+  const gridInput = useMemo(
+    () => ({
+      ingredientIds: ingredients.map((i) => i.id),
+      steps: steps.map((s, idx) => ({ ...s, number: idx + 1 })),
+    }),
+    [ingredients, steps],
+  );
+  const showGridTab = hasGrid(gridInput);
+  const layout = useMemo(() => (showGridTab ? layoutGrid(gridInput) : null), [showGridTab, gridInput]);
+
   return (
     <>
       <div className="mt-8 flex flex-wrap items-center gap-3 border-b pb-4 print:hidden">
+        {showGridTab && (
+          <Tabs value={view} onValueChange={(v) => setView(v as "recipe" | "grid")}>
+            <TabsList aria-label="View">
+              <TabsTrigger value="recipe">Recipe</TabsTrigger>
+              <TabsTrigger value="grid">Grid</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
         <div className="ml-auto flex flex-wrap gap-2">
           <Tabs value={scale} onValueChange={setScale}>
             <TabsList aria-label="Scale">
@@ -60,57 +81,67 @@ export function RecipeView({ ingredients, steps, aside, after }: Props) {
         </div>
       </div>
 
-      <div className="mt-7 flex flex-wrap gap-12">
-        <div className="flex min-w-0 flex-[1_1_17rem] flex-col gap-8">
-          <section>
-            <SectionLabel>Ingredients</SectionLabel>
-            <ul className="flex flex-col">
-              {lines.map((l, idx) => (
-                <li key={l.id}>
-                  {l.section && l.section !== lines[idx - 1]?.section && (
-                    <h3 className="mt-3 mb-1 text-sm font-semibold first:mt-0">{l.section}</h3>
-                  )}
-                  <label className="flex cursor-pointer items-start gap-3 py-2 text-[0.9375rem] leading-snug has-[:checked]:text-muted-foreground has-[:checked]:line-through">
-                    <Checkbox className="mt-0.5 print:hidden" />
-                    <span>
-                      {l.amount && <span className="font-medium">{l.amount}</span>} {l.name}
-                      {l.note && <span className="text-muted-foreground">, {l.note}</span>}
-                      {l.linkedRecipe && (
-                        <Link href={`/recipes/${l.linkedRecipe.id}`} className="ml-1 text-primary underline underline-offset-2">
-                          recipe
-                        </Link>
-                      )}
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </section>
-          {aside}
-        </div>
-
-        <div className="flex min-w-0 flex-[999_1_26rem] flex-col gap-10">
-          <section>
-            <SectionLabel>Steps</SectionLabel>
-            <ol className="flex flex-col gap-4">
-              {steps.map((s, idx) => (
-                <li key={s.id}>
-                  {s.section && s.section !== steps[idx - 1]?.section && (
-                    <h3 className="mb-2 text-sm font-semibold">{s.section}</h3>
-                  )}
-                  <div className="flex gap-4 leading-relaxed">
-                    <span aria-hidden className="w-5 shrink-0 pt-px text-[0.9375rem] text-muted-foreground tabular-nums">
-                      {idx + 1}
-                    </span>
-                    <span>{s.text}</span>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </section>
+      {view === "grid" && layout ? (
+        <div className="mt-7 flex flex-col gap-10">
+          <RecipeGrid
+            layout={layout}
+            ingredientLabels={lines.map((l) => [l.amount, l.name].filter(Boolean).join(" ") + (l.note ? `, ${l.note}` : ""))}
+          />
           {after}
         </div>
-      </div>
+      ) : (
+        <div className="mt-7 flex flex-wrap gap-12">
+          <div className="flex min-w-0 flex-[1_1_17rem] flex-col gap-8">
+            <section>
+              <SectionLabel>Ingredients</SectionLabel>
+              <ul className="flex flex-col">
+                {lines.map((l, idx) => (
+                  <li key={l.id}>
+                    {l.section && l.section !== lines[idx - 1]?.section && (
+                      <h3 className="mt-3 mb-1 text-sm font-semibold first:mt-0">{l.section}</h3>
+                    )}
+                    <label className="flex cursor-pointer items-start gap-3 py-2 text-[0.9375rem] leading-snug has-[:checked]:text-muted-foreground has-[:checked]:line-through">
+                      <Checkbox className="mt-0.5 print:hidden" />
+                      <span>
+                        {l.amount && <span className="font-medium">{l.amount}</span>} {l.name}
+                        {l.note && <span className="text-muted-foreground">, {l.note}</span>}
+                        {l.linkedRecipe && (
+                          <Link href={`/recipes/${l.linkedRecipe.id}`} className="ml-1 text-primary underline underline-offset-2">
+                            recipe
+                          </Link>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </section>
+            {aside}
+          </div>
+
+          <div className="flex min-w-0 flex-[999_1_26rem] flex-col gap-10">
+            <section>
+              <SectionLabel>Steps</SectionLabel>
+              <ol className="flex flex-col gap-4">
+                {steps.map((s, idx) => (
+                  <li key={s.id}>
+                    {s.section && s.section !== steps[idx - 1]?.section && (
+                      <h3 className="mb-2 text-sm font-semibold">{s.section}</h3>
+                    )}
+                    <div className="flex gap-4 leading-relaxed">
+                      <span aria-hidden className="w-5 shrink-0 pt-px text-[0.9375rem] text-muted-foreground tabular-nums">
+                        {idx + 1}
+                      </span>
+                      <span>{s.text}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+            {after}
+          </div>
+        </div>
+      )}
     </>
   );
 }
