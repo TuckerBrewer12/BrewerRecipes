@@ -3,10 +3,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRightIcon } from "lucide-react";
 
+import { MadeThis } from "@/components/recipe/made-this";
+import { OriginalCards } from "@/components/recipe/original-cards";
+import { RecipeCommentForm } from "@/components/recipe/recipe-comment-form";
 import { RecipeView } from "@/components/recipe/recipe-view";
+import { Avatar } from "@/components/ui/avatar";
 import { requireMember } from "@/lib/auth";
 import { getRecipe } from "@/lib/queries";
-import { possessive, shortDate } from "@/lib/utils";
+import { initials, possessive, relativeTime, shortDate } from "@/lib/utils";
 
 export async function generateMetadata(props: PageProps<"/recipes/[id]">): Promise<Metadata> {
   const { id } = await props.params;
@@ -83,6 +87,9 @@ export default async function RecipePage(props: PageProps<"/recipes/[id]">) {
             />
           </dl>
           {recipe.tags.length > 0 && <p className="text-[0.8125rem] text-muted-foreground">{recipe.tags.join(", ")}</p>}
+          <div className="mt-3 flex flex-wrap gap-2 print:hidden">
+            <MadeThis recipeId={recipe.id} title={recipe.title} />
+          </div>
         </div>
         {recipe.photoUrl && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -97,6 +104,7 @@ export default async function RecipePage(props: PageProps<"/recipes/[id]">) {
       <RecipeView
         ingredients={recipe.ingredients}
         steps={recipe.steps}
+        aside={<OriginalCards title={recipe.title} images={recipe.originals} />}
         after={
           <>
             {recipe.notes.length > 0 && (
@@ -113,6 +121,24 @@ export default async function RecipePage(props: PageProps<"/recipes/[id]">) {
                 </ul>
               </section>
             )}
+            <section className="border-t pt-6 print:hidden">
+              <SectionLabel>Comments</SectionLabel>
+              {recipe.comments.length > 0 && (
+                <ul className="mb-4 flex flex-col gap-3">
+                  {recipe.comments.map((c) => (
+                    <li key={c.id} className="flex gap-2.5">
+                      <Avatar className="size-7">{initials(c.author.name)}</Avatar>
+                      <div className="text-sm leading-relaxed">
+                        <span className="font-medium">{c.author.name}</span>{" "}
+                        <span className="text-muted-foreground">· {relativeTime(c.createdAt)}</span>
+                        <p className="text-zinc-700">{c.body}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <RecipeCommentForm recipeId={recipe.id} />
+            </section>
           </>
         }
       />
