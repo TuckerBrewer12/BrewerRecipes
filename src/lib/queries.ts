@@ -165,6 +165,11 @@ export async function recentRecipes(limit = 5) {
   }));
 }
 
+export async function recipeOptions() {
+  const { data } = await db().from("recipes").select("id, title").is("deleted_at", null).order("title");
+  return ((data ?? []) as Row[]).map((r) => ({ id: String(r.id), title: String(r.title) }));
+}
+
 export async function listPeople(): Promise<PersonRef[]> {
   const { data } = await db().from("people").select("id, name").order("name");
   return (data ?? []) as PersonRef[];

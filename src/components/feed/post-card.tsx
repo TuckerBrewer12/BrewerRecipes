@@ -2,12 +2,13 @@ import Link from "next/link";
 import { BookOpenIcon } from "lucide-react";
 
 import { PostComments } from "@/components/feed/post-comments";
+import { PostMenu } from "@/components/feed/post-menu";
 import { Reactions } from "@/components/feed/reactions";
 import { Avatar } from "@/components/ui/avatar";
 import type { FeedPost } from "@/lib/queries";
 import { cn, initials, relativeTime } from "@/lib/utils";
 
-export function PostCard({ post }: { post: FeedPost }) {
+export function PostCard({ post, meId }: { post: FeedPost; meId: string }) {
   const photos = post.photos.slice(0, 4);
   return (
     <article className="flex flex-col gap-3.5 rounded-xl border p-4 shadow-xs">
@@ -22,6 +23,7 @@ export function PostCard({ post }: { post: FeedPost }) {
             {post.editedAt && " · edited"}
           </span>
         </div>
+        {post.author.id === meId && <PostMenu postId={post.id} caption={post.caption} />}
       </div>
 
       {photos.length > 0 && (
